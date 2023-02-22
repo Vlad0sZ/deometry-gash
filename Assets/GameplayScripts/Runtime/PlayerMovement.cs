@@ -1,30 +1,38 @@
-﻿using System;
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace GameplayScripts.Runtime
 {
     [RequireComponent(typeof(Rigidbody2D), typeof(Collider2D))]
     public class PlayerMovement : MonoBehaviour
     {
+        [System.Serializable]
+        private struct PhysicsSettings
+        {
+            public float maxDistance;
+            public LayerMask layerMask;
+        }
+
+        [System.Serializable]
+        private struct MovementSettings
+        {
+            public float angleVelocity;
+            public float jumpVelocity;
+            public float moveVelocity;
+        }
+
+
+        [SerializeField] private PhysicsSettings physics;
+        [SerializeField] private MovementSettings movement;
+
         private Rigidbody2D _rigidbody;
-        private Collider2D _collider;
-        private Vector3 _startPosition;
-        private Transform _transform;
-
-        public float torqueVelocity;
-        public Vector2 jumpVelocity;
-        public Vector2 moveVelocity;
-
-        private Vector2 _velocity;
+        private Vector2 _startPosition;
 
         public bool IsGrounded { get; private set; }
 
         private void Awake()
         {
-            _transform = transform;
-            _collider = GetComponent<Collider2D>();
             _rigidbody = GetComponent<Rigidbody2D>();
-            _startPosition = _transform.position;
+            _startPosition = _rigidbody.position;
         }
 
         private void Update()
@@ -32,60 +40,73 @@ namespace GameplayScripts.Runtime
             if (Input.GetKeyDown(KeyCode.R))
                 Respawn();
 
-            _velocity = new Vector2(moveVelocity.x, _rigidbody.velocity.y);
-            if (Input.GetKey(KeyCode.Space) && IsGrounded && _velocity.y < jumpVelocity.y)
-                _velocity += jumpVelocity;
+            var velocity = GetVelocity();
 
-            _rigidbody.velocity = _velocity;
+            if (Input.GetKey(KeyCode.Space) && CanJump())
+                velocity += movement.jumpVelocity * Vector2.up;
+
+            ApplyAngularVelocity();
+            ApplyMovementVelocity(velocity);
         }
+
 
         private void FixedUpdate()
         {
-            if (!IsGrounded)
-                AddTorque();
-            else _rigidbody.angularVelocity = 0;
+            var position = _rigidbody.position;
+            RaycastHit2D hit =
+                Physics2D.Raycast(
+                    position,
+                    Vector2.down,
+                    physics.maxDistance,
+                    physics.layerMask.value);
+
+            IsGrounded = hit.collider != null;
+            Debug.DrawRay(position, Vector3.down * physics.maxDistance, IsGrounded ? Color.green : Color.red);
         }
 
         private void OnCollisionEnter2D(Collision2D other)
         {
             if (other.contactCount == 0) return;
-            var direction = other.GetContact(0).normal;
-            var sqr = Vector2.SqrMagnitude(direction - Vector2.up);
 
-            if (sqr < 0.1f)
-                IsGrounded = true;
-            else
-            {
-                Debug.Log($"Direction was {direction}, sqr = {sqr}");
+            if (Obstacle.IsObstacle(other.collider))
                 Respawn();
-            }
+
+            Vector2 direction = other.GetContact(0).normal;
+            float sqr = Vector2.SqrMagnitude(direction - Vector2.up);
+            if (sqr < 0.225f) return;
+
+            Respawn();
         }
 
-        private void OnCollisionExit2D(Collision2D other) => IsGrounded = false;
+
+        private Vector2 GetVelocity() => new(movement.moveVelocity, _rigidbody.velocity.y);
+
+        private bool CanJump() => IsGrounded && _rigidbody.velocity.y < movement.jumpVelocity;
+
+        private void ApplyAngularVelocity()
+        {
+            if (!IsGrounded)
+                _rigidbody.angularVelocity = movement.angleVelocity;
+            else
+                _rigidbody.angularVelocity = _rigidbody.rotation = 0;
+        }
+
+        private void ApplyMovementVelocity(Vector2 velocity) => _rigidbody.velocity = velocity;
 
         private void Respawn()
         {
-            _rigidbody.Sleep();
-            _transform.position = _startPosition;
+            EventManager.InvokePlayerDied();
             _rigidbody.velocity = Vector2.zero;
             _rigidbody.angularVelocity = 0;
-            _rigidbody.WakeUp();
-        }
-
-        private void AddTorque()
-        {
-            float impulse = (torqueVelocity * Mathf.Deg2Rad) * _rigidbody.inertia;
-            _rigidbody.angularVelocity = torqueVelocity;
+            _rigidbody.position = _startPosition;
         }
 
         private void OnGUI()
         {
             var rect = GUIUtility.GUIToScreenRect(new Rect(8, 8, 160, 160));
-            GUI.Label(rect, $"Position: {_transform.position}\n" +
-                            $"IsGrounded: {IsGrounded}\n" +
+            GUI.Label(rect, $"IsGrounded: {IsGrounded}\n" +
                             $"R2D_Velocity: {_rigidbody.velocity}\n" +
-                            $"R2D_Angular: {_rigidbody.angularVelocity}\n" +
-                            $"velocity: {_velocity}");
+                            $"R2D_Angular: {_rigidbody.angularVelocity}\n");
         }
     }
 }
